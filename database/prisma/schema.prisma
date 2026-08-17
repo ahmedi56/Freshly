@@ -1,0 +1,652 @@
+// Freshly — Prisma schema
+// See docs/DATABASE.md for design rationale.
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "mysql"
+  url      = env("DATABASE_URL")
+}
+
+// =====================================================================
+// ENUMS
+// =====================================================================
+
+enum Role {
+  CUSTOMER
+  CLEANER
+  ADMIN
+}
+
+enum UserStatus {
+  ACTIVE
+  SUSPENDED
+  DEACTIVATED
+}
+
+enum CleanerApplicationStatus {
+  PENDING
+  UNDER_REVIEW
+  APPROVED
+  REJECTED
+  SUSPENDED
+}
+
+enum CleanerDocumentType {
+  ID_DOCUMENT
+  PROOF_OF_ADDRESS
+  POLICE_CLEARANCE
+  PROFILE_PHOTO
+  OTHER
+}
+
+enum BookingStatus {
+  DRAFT
+  PENDING_PAYMENT
+  PAID
+  CONFIRMED
+  CLEANER_ASSIGNED
+  CLEANER_ACCEPTED
+  ON_THE_WAY
+  ARRIVED
+  CLEANING_STARTED
+  COMPLETED
+  CANCELLED
+  REJECTED
+}
+
+enum AssignmentStatus {
+  OFFERED
+  ACCEPTED
+  DECLINED
+  REVOKED
+}
+
+enum PaymentProviderType {
+  SANDBOX
+  CARD
+  OZOW
+}
+
+enum PaymentStatus {
+  PENDING
+  PROCESSING
+  SUCCESS
+  FAILED
+  CANCELLED
+  REFUNDED
+}
+
+enum NotificationType {
+  BOOKING_CREATED
+  PAYMENT_SUCCESS
+  PAYMENT_FAILED
+  CLEANER_ASSIGNED
+  CLEANER_ACCEPTED
+  CLEANER_ON_THE_WAY
+  CLEANER_ARRIVED
+  CLEANING_STARTED
+  CLEANING_COMPLETED
+  BOOKING_CANCELLED
+  REVIEW_REQUESTED
+  APPLICATION_APPROVED
+  APPLICATION_REJECTED
+  PROMOTION
+  SYSTEM
+}
+
+enum PromotionType {
+  PERCENTAGE
+  FIXED_AMOUNT
+}
+
+enum ReferralStatus {
+  PENDING
+  CLAIMED
+  REWARDED
+}
+
+enum LoyaltyTransactionType {
+  EARN
+  REDEEM
+  ADJUSTMENT
+  EXPIRE
+}
+
+enum BookingItemType {
+  BASE_SERVICE
+  EXTRA
+}
+
+// =====================================================================
+// IDENTITY
+// =====================================================================
+
+model User {
+  id                String     @id @default(cuid())
+  email             String     @unique
+  passwordHash      String
+  role              Role
+  status            UserStatus @default(ACTIVE)
+  emailVerifiedAt   DateTime?
+  createdAt         DateTime   @default(now())
+  updatedAt         DateTime   @updatedAt
+
+  customerProfile   CustomerProfile?
+  cleanerProfile    CleanerProfile?
+
+  refreshTokens         RefreshToken[]
+  reviewedApplications  CleanerApplication[] @relation("ApplicationReviewer")
+  assignmentsMade        CleanerAssignment[]  @relation("AssignmentAssignedBy")
+  bookingStatusChanges    BookingStatusHistory[] @relation("StatusChangedBy")
+  notifications          Notification[]
+  auditLogs               AuditLog[]           @relation("AuditActor")
+
+  @@index([role])
+}
+
+model RefreshToken {
+  id         String   @id @default(cuid())
+  userId     String
+  tokenHash  String   @unique
+  expiresAt  DateTime
+  revokedAt  DateTime?
+  createdAt  DateTime @default(now())
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+}
+
+model CustomerProfile {
+  id        String   @id @default(cuid())
+  userId    String   @unique
+  firstName String
+  lastName  String
+  phone     String?
+  avatarKey String?
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  user             User               @relation(fields: [userId], references: [id], onDelete: Cascade)
+  addresses        Address[]
+  bookings         Booking[]
+  favorites        FavoriteCleaner[]
+  loyaltyAccount   LoyaltyAccount?
+  referralsMade    Referral[]         @relation("Referrer")
+  referralClaimed  Referral?          @relation("Referee")
+  reviews          Review[]
+
+  @@index([userId])
+}
+
+model CleanerProfile {
+  id             String   @id @default(cuid())
+  userId         String   @unique
+  firstName      String
+  lastName       String
+  phone          String
+  bio            String?  @db.Text
+  avatarKey      String?
+  ratingAverage  Decimal  @default(0) @db.Decimal(3, 2)
+  ratingCount    Int      @default(0)
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+
+  user         User                @relation(fields: [userId], references: [id], onDelete: Cascade)
+  application  CleanerApplication?
+  availability CleanerAvailability[]
+  assignments  CleanerAssignment[]
+  favoritedBy  FavoriteCleaner[]
+  reviews      Review[]
+
+  @@index([userId])
+  @@index([ratingAverage])
+}
+
+// =====================================================================
+// CLEANER ONBOARDING
+// =====================================================================
+
+model CleanerApplication {
+  id               String                    @id @default(cuid())
+  cleanerProfileId String                    @unique
+  status           CleanerApplicationStatus  @default(PENDING)
+  dateOfBirth      DateTime
+  addressLine1     String
+  addressLine2     String?
+  city             String
+  province         String
+  postalCode       String
+  idNumber         String
+  criminalRecordDeclaration Boolean          @default(false)
+  reviewedById     String?
+  reviewedAt       DateTime?
+  rejectionReason  String?                   @db.Text
+  createdAt        DateTime                  @default(now())
+  updatedAt        DateTime                  @updatedAt
+
+  cleanerProfile CleanerProfile     @relation(fields: [cleanerProfileId], references: [id], onDelete: Cascade)
+  reviewedBy     User?              @relation("ApplicationReviewer", fields: [reviewedById], references: [id])
+  documents      CleanerDocument[]
+  references     CleanerReference[]
+
+  @@index([status])
+}
+
+model CleanerDocument {
+  id                   String              @id @default(cuid())
+  cleanerApplicationId String
+  type                 CleanerDocumentType
+  storageKey           String
+  originalFilename     String
+  createdAt            DateTime            @default(now())
+
+  application CleanerApplication @relation(fields: [cleanerApplicationId], references: [id], onDelete: Cascade)
+
+  @@index([cleanerApplicationId])
+}
+
+model CleanerReference {
+  id                   String   @id @default(cuid())
+  cleanerApplicationId String
+  name                 String
+  relationship         String
+  phone                String
+  contacted            Boolean  @default(false)
+  createdAt            DateTime @default(now())
+
+  application CleanerApplication @relation(fields: [cleanerApplicationId], references: [id], onDelete: Cascade)
+
+  @@index([cleanerApplicationId])
+}
+
+model CleanerAvailability {
+  id               String   @id @default(cuid())
+  cleanerProfileId String
+  dayOfWeek        Int      // 0 = Sunday .. 6 = Saturday
+  startTime        String   // "09:00"
+  endTime          String   // "17:00"
+  createdAt        DateTime @default(now())
+
+  cleanerProfile CleanerProfile @relation(fields: [cleanerProfileId], references: [id], onDelete: Cascade)
+
+  @@index([cleanerProfileId])
+  @@unique([cleanerProfileId, dayOfWeek, startTime])
+}
+
+// =====================================================================
+// CATALOG
+// =====================================================================
+
+model ServiceCategory {
+  id          String    @id @default(cuid())
+  name        String    @unique
+  slug        String    @unique
+  description String?   @db.Text
+  iconKey     String?
+  sortOrder   Int        @default(0)
+  active      Boolean    @default(true)
+  createdAt   DateTime   @default(now())
+  updatedAt   DateTime   @updatedAt
+
+  services Service[]
+}
+
+model Service {
+  id                       String   @id @default(cuid())
+  categoryId               String
+  name                     String
+  slug                     String   @unique
+  description              String?  @db.Text
+  basePrice                Decimal  @db.Decimal(10, 2)
+  estimatedDurationMinutes Int
+  active                   Boolean  @default(true)
+  createdAt                DateTime @default(now())
+  updatedAt                DateTime @updatedAt
+
+  category      ServiceCategory          @relation(fields: [categoryId], references: [id], onDelete: Restrict)
+  extras        ServiceExtraOnService[]
+  pricingRules  ServicePricing[]
+  bookings      Booking[]
+
+  @@index([categoryId])
+}
+
+model ServiceExtra {
+  id          String   @id @default(cuid())
+  name        String
+  description String?
+  price       Decimal  @db.Decimal(10, 2)
+  active      Boolean  @default(true)
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  services     ServiceExtraOnService[]
+  bookingItems BookingItem[]
+}
+
+model ServiceExtraOnService {
+  serviceId      String
+  serviceExtraId String
+
+  service      Service      @relation(fields: [serviceId], references: [id], onDelete: Cascade)
+  serviceExtra ServiceExtra @relation(fields: [serviceExtraId], references: [id], onDelete: Cascade)
+
+  @@id([serviceId, serviceExtraId])
+}
+
+// Versioned pricing rules (e.g. multiplier per room count / property size).
+// Bookings reference the specific ServicePricing row active at booking time,
+// so historical bookings remain accurate even if rules change later.
+model ServicePricing {
+  id          String   @id @default(cuid())
+  serviceId   String
+  minRooms    Int
+  maxRooms    Int?
+  multiplier  Decimal  @default(1) @db.Decimal(4, 2)
+  effectiveFrom DateTime @default(now())
+  effectiveTo   DateTime?
+  createdAt   DateTime @default(now())
+
+  service  Service   @relation(fields: [serviceId], references: [id], onDelete: Cascade)
+  bookings Booking[]
+
+  @@index([serviceId])
+}
+
+// =====================================================================
+// LOCATION
+// =====================================================================
+
+model Address {
+  id                String   @id @default(cuid())
+  customerProfileId String
+  label             String   @default("Home")
+  line1             String
+  line2             String?
+  city              String
+  province          String
+  postalCode        String
+  latitude          Decimal? @db.Decimal(9, 6)
+  longitude         Decimal? @db.Decimal(9, 6)
+  isDefault         Boolean  @default(false)
+  createdAt         DateTime @default(now())
+  updatedAt         DateTime @updatedAt
+
+  customerProfile CustomerProfile @relation(fields: [customerProfileId], references: [id], onDelete: Cascade)
+  bookings        Booking[]
+
+  @@index([customerProfileId])
+}
+
+// =====================================================================
+// BOOKING CORE
+// =====================================================================
+
+model Booking {
+  id                 String        @id @default(cuid())
+  customerId         String
+  addressId          String
+  serviceId          String
+  servicePricingId   String?
+  promotionId        String?
+  status             BookingStatus @default(DRAFT)
+
+  scheduledAt        DateTime
+  propertySizeSqm    Int?
+  rooms              Int?
+  notes              String?       @db.Text
+
+  subtotal           Decimal       @db.Decimal(10, 2)
+  extrasTotal         Decimal       @default(0) @db.Decimal(10, 2)
+  discountTotal        Decimal       @default(0) @db.Decimal(10, 2)
+  vatTotal              Decimal       @default(0) @db.Decimal(10, 2)
+  total                  Decimal       @db.Decimal(10, 2)
+
+  createdAt          DateTime      @default(now())
+  updatedAt          DateTime      @updatedAt
+
+  customer        CustomerProfile          @relation(fields: [customerId], references: [id], onDelete: Restrict)
+  address         Address                  @relation(fields: [addressId], references: [id], onDelete: Restrict)
+  service         Service                  @relation(fields: [serviceId], references: [id], onDelete: Restrict)
+  servicePricing  ServicePricing?          @relation(fields: [servicePricingId], references: [id])
+  promotion       Promotion?               @relation(fields: [promotionId], references: [id])
+
+  items           BookingItem[]
+  statusHistory   BookingStatusHistory[]
+  assignments     CleanerAssignment[]
+  payment         Payment?
+  review          Review?
+  loyaltyTxns     LoyaltyTransaction[]
+  notifications   Notification[]
+
+  @@index([customerId, status])
+  @@index([status, scheduledAt])
+}
+
+model BookingItem {
+  id             String          @id @default(cuid())
+  bookingId      String
+  type           BookingItemType
+  serviceExtraId String?
+  description    String
+  unitPrice      Decimal         @db.Decimal(10, 2)
+  quantity       Int             @default(1)
+  lineTotal      Decimal         @db.Decimal(10, 2)
+  createdAt      DateTime        @default(now())
+
+  booking      Booking       @relation(fields: [bookingId], references: [id], onDelete: Cascade)
+  serviceExtra ServiceExtra? @relation(fields: [serviceExtraId], references: [id])
+
+  @@index([bookingId])
+}
+
+// Append-only audit trail of every status transition. Never updated/deleted.
+model BookingStatusHistory {
+  id            String        @id @default(cuid())
+  bookingId     String
+  fromStatus    BookingStatus?
+  toStatus      BookingStatus
+  changedById   String?
+  note          String?
+  createdAt     DateTime      @default(now())
+
+  booking   Booking @relation(fields: [bookingId], references: [id], onDelete: Cascade)
+  changedBy User?   @relation("StatusChangedBy", fields: [changedById], references: [id])
+
+  @@index([bookingId])
+}
+
+// A booking can accumulate multiple assignment rows over time (decline →
+// re-offer). The "current" assignment is the latest by createdAt.
+model CleanerAssignment {
+  id              String            @id @default(cuid())
+  bookingId       String
+  cleanerId       String
+  assignedById    String?
+  status          AssignmentStatus  @default(OFFERED)
+  offeredAt       DateTime          @default(now())
+  respondedAt     DateTime?
+  createdAt       DateTime          @default(now())
+
+  booking     Booking         @relation(fields: [bookingId], references: [id], onDelete: Cascade)
+  cleaner     CleanerProfile  @relation(fields: [cleanerId], references: [id], onDelete: Restrict)
+  assignedBy  User?           @relation("AssignmentAssignedBy", fields: [assignedById], references: [id])
+
+  @@index([bookingId])
+  @@index([cleanerId, status])
+}
+
+// =====================================================================
+// PAYMENTS
+// =====================================================================
+
+model Payment {
+  id           String              @id @default(cuid())
+  bookingId    String              @unique
+  provider     PaymentProviderType
+  status       PaymentStatus       @default(PENDING)
+  amount       Decimal             @db.Decimal(10, 2)
+  currency     String              @default("ZAR")
+  providerRef  String?
+  createdAt    DateTime            @default(now())
+  updatedAt    DateTime            @updatedAt
+
+  booking      Booking              @relation(fields: [bookingId], references: [id], onDelete: Restrict)
+  transactions PaymentTransaction[]
+
+  @@index([status])
+}
+
+// Append-only log of every payment state change / provider event.
+model PaymentTransaction {
+  id         String        @id @default(cuid())
+  paymentId  String
+  status     PaymentStatus
+  rawEvent   Json?
+  createdAt  DateTime      @default(now())
+
+  payment Payment @relation(fields: [paymentId], references: [id], onDelete: Cascade)
+
+  @@index([paymentId])
+}
+
+// =====================================================================
+// POST-SERVICE
+// =====================================================================
+
+model Review {
+  id             String   @id @default(cuid())
+  bookingId      String   @unique
+  customerId     String
+  cleanerId      String
+  rating         Int
+  comment        String?  @db.Text
+  cleanerReply   String?  @db.Text
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+
+  booking  Booking         @relation(fields: [bookingId], references: [id], onDelete: Restrict)
+  customer CustomerProfile @relation(fields: [customerId], references: [id], onDelete: Restrict)
+  cleaner  CleanerProfile  @relation(fields: [cleanerId], references: [id], onDelete: Restrict)
+
+  @@index([cleanerId])
+  @@index([customerId])
+}
+
+model FavoriteCleaner {
+  id                String   @id @default(cuid())
+  customerProfileId String
+  cleanerProfileId  String
+  createdAt         DateTime @default(now())
+
+  customer CustomerProfile @relation(fields: [customerProfileId], references: [id], onDelete: Cascade)
+  cleaner  CleanerProfile  @relation(fields: [cleanerProfileId], references: [id], onDelete: Cascade)
+
+  @@unique([customerProfileId, cleanerProfileId])
+}
+
+// =====================================================================
+// GROWTH
+// =====================================================================
+
+model Notification {
+  id              String           @id @default(cuid())
+  userId          String
+  type            NotificationType
+  title           String
+  body            String           @db.Text
+  relatedBookingId String?
+  readAt          DateTime?
+  createdAt       DateTime         @default(now())
+
+  user    User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  booking Booking? @relation(fields: [relatedBookingId], references: [id])
+
+  @@index([userId, readAt])
+}
+
+model LoyaltyAccount {
+  id                String   @id @default(cuid())
+  customerProfileId String   @unique
+  pointsBalance     Int      @default(0)
+  createdAt         DateTime @default(now())
+  updatedAt         DateTime @updatedAt
+
+  customer     CustomerProfile      @relation(fields: [customerProfileId], references: [id], onDelete: Cascade)
+  transactions LoyaltyTransaction[]
+}
+
+// Append-only ledger; pointsBalance on LoyaltyAccount is a derived cache.
+model LoyaltyTransaction {
+  id               String                  @id @default(cuid())
+  loyaltyAccountId String
+  type             LoyaltyTransactionType
+  points           Int
+  reason           String
+  relatedBookingId String?
+  createdAt        DateTime                @default(now())
+
+  account LoyaltyAccount @relation(fields: [loyaltyAccountId], references: [id], onDelete: Cascade)
+  booking Booking?       @relation(fields: [relatedBookingId], references: [id])
+
+  @@index([loyaltyAccountId])
+}
+
+model Referral {
+  id                 String         @id @default(cuid())
+  referrerId         String
+  refereeId          String?        @unique
+  code               String         @unique
+  status             ReferralStatus @default(PENDING)
+  rewardPoints       Int            @default(0)
+  createdAt          DateTime       @default(now())
+  claimedAt          DateTime?
+
+  referrer CustomerProfile  @relation("Referrer", fields: [referrerId], references: [id], onDelete: Cascade)
+  referee  CustomerProfile? @relation("Referee", fields: [refereeId], references: [id])
+
+  @@index([referrerId])
+}
+
+model Promotion {
+  id           String        @id @default(cuid())
+  code         String        @unique
+  description  String?
+  type         PromotionType
+  value        Decimal       @db.Decimal(10, 2)
+  validFrom    DateTime
+  validTo      DateTime
+  usageLimit   Int?
+  usageCount   Int           @default(0)
+  active       Boolean       @default(true)
+  createdAt    DateTime      @default(now())
+  updatedAt    DateTime      @updatedAt
+
+  bookings Booking[]
+
+  @@index([code])
+  @@index([active])
+}
+
+// =====================================================================
+// PLATFORM
+// =====================================================================
+
+model AuditLog {
+  id         String   @id @default(cuid())
+  actorId    String?
+  action     String
+  entityType String
+  entityId   String
+  metadata   Json?
+  createdAt  DateTime @default(now())
+
+  actor User? @relation("AuditActor", fields: [actorId], references: [id])
+
+  @@index([entityType, entityId])
+  @@index([actorId])
+}

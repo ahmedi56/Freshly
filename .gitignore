@@ -1,0 +1,30 @@
+# Dependencies
+node_modules/
+
+# Env files (may contain secrets)
+.env
+.env.local
+.env.*.local
+!.env.example
+!.env.sample
+
+# Build output
+.next/
+out/
+dist/
+build/
+.expo/
+*.tsbuildinfo
+
+# Database (SQLite data — never commit user data)
+backend/data/*.db
+backend/data/*.db-*
+
+# Logs & OS
+*.log
+.DS_Store
+Thumbs.db
+
+# Expo / native
+apps/cleaner-mobile/.expo/
+*.orig.*

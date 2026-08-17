@@ -1,0 +1,17 @@
+{
+  "name": "freshly",
+  "private": true,
+  "version": "0.1.0",
+  "workspaces": [
+    "apps/*",
+    "packages/*"
+  ],
+  "scripts": {
+    "dev:api": "npm --prefix backend run dev",
+    "seed:api": "npm --prefix backend run seed",
+    "dev:web": "npm run dev --workspace=apps/customer-web",
+    "build:web": "npm run build --workspace=apps/customer-web",
+    "lint:web": "npm run lint --workspace=apps/customer-web",
+    "dev:mobile": "npm run start --workspace=apps/cleaner-mobile"
+  }
+}
